@@ -179,7 +179,7 @@ class VORTEX_LIB:
         return(f_smooth)
 
     """
-    Defines the 2nd order central difference stencil for the laplace equation on a sphere.
+    Defines the 2nd order central difference stencil for the laplace equation.
     nx and ny represent the size of the domain.
     """
     def laplace_stencil(self, nx, ny, lon, lat):
@@ -194,21 +194,11 @@ class VORTEX_LIB:
         d1_lower = np.multiply(d.copy()[0:-1], np.divide(1, np.power(np.cos(np.deg2rad(LAT.flatten()[:-1])), 2)))
         d1_upper = np.multiply(d.copy()[0:-1], np.divide(1, np.power(np.cos(np.deg2rad(LAT.flatten()[1:])), 2)))
 
-        dnx_lower = np.multiply(d.copy()[0:-nx], 1)  # + 0.5 * dh / 10 * np.tan(np.deg2rad(LAT.flatten()[nx:])))
-        dnx_upper = np.multiply(d.copy()[0:-nx], 1)  # - 0.5 * dh /10 * np.tan(np.deg2rad(LAT.flatten()[:-nx])))
+        dnx_lower = np.multiply(d.copy()[0:-nx], 1)
+        dnx_upper = np.multiply(d.copy()[0:-nx], 1)
 
         d1_lower[nx - 1::nx] = 0  # every nx element on first diagonal is zero; starting from the nx-th element
         d1_upper[nx - 1::nx] = 0
-
-        # Every nx element on first upper diagonal is two; stating from the first element.
-        # d1_upper[::nx] = 2 * np.divide(1, np.power(np.cos(np.deg2rad(LAT.flatten()[1::nx])), 2))
-        # Every nx element on first lower diagonal is two; stating from the first element.
-        # d1_lower[(nx-2)::nx] = 2 * np.divide(1, np.power(np.cos(np.deg2rad(LAT.flatten()[(nx-1)::nx])), 2))
-
-        # The first nx elements in the nx-th upper diagonal is two
-        # dnx_upper[0:nx] = 2 * (1 - 0.5 * dh * np.tan(np.deg2rad(LAT.flatten()[nx:(2*nx)])))
-        # The last nx elements in the nx-th lower diagonal is two;
-        # dnx_lower[(dnx_lower.size - nx):] = 2 * (1 + 0.5 * dh * np.tan(np.deg2rad(LAT.flatten()[-nx:])))
 
         A = scipy.sparse.diags([d0, d1_upper, d1_lower, dnx_upper, dnx_lower], [0, 1, -1, nx, -nx], format='csr')
         return(A)
