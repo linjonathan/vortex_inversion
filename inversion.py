@@ -5,11 +5,8 @@ import xarray as xr
 import numpy as np
 
 # Read in sample data
-fn_u = 'era5_sample_wind.nc'
-fn_v = 'era5_sample_wind.nc'
-u = xr.open_dataset(fn_u, engine = 'netcdf4')
-v = xr.open_dataset(fn_v, engine = 'netcdf4')
-ds = xr.merge([u, v])
+fn = 'era5_sample_wind.nc'
+ds = xr.open_dataset(fn, engine = 'netcdf4')
 
 # Spherical harmonic expansion needs to remove 90S and 360E
 lat = ds['latitude'].sel(latitude = slice(90.0, -89.99)).data
