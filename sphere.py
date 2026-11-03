@@ -44,71 +44,138 @@ def sphere_theta(lonc, latc, lon_grid, lat_grid):
 
     return(theta)
 
-# Calculate relative vorticity using second order, central differencing.
-# TODO: Use forwards and backwards differencing at the poles.
-# uwnd and vwnd are grids with dimensions [lat, lon].
 def calc_rvor_sphere(lon, lat, uwnd, vwnd):
-    # Pad the left and right edges for the finite differences..
-    lon_wrap = np.hstack((lon[-1], lon, lon[0]))
-    u_wrap = np.hstack((np.expand_dims(uwnd[:, -1], 1), uwnd, np.expand_dims(uwnd[:, 0], 1)))
-    v_wrap = np.hstack((np.expand_dims(vwnd[:, -1], 1), vwnd, np.expand_dims(vwnd[:, 0], 1)))
-    LON, LAT = np.meshgrid(np.deg2rad(lon_wrap), np.deg2rad(lat))
+    """
+    Relative vorticity on a sphere:
+        zeta = (1/(a cos(phi))) * [ d(v)/d(lambda) - d(u cos(phi))/d(phi) ]
+    uwnd, vwnd: shape [lat, lon].
+    """
+    R = constants.R
     dlon = np.deg2rad(lon[1] - lon[0])
     dlat = np.deg2rad(lat[1] - lat[0])
+    coslat = np.cos(np.deg2rad(lat))[:, None]
 
-    t1 = (u_wrap[2:, 1:-1] - u_wrap[0:-2, 1:-1]) / (2 * dlon * constants.R)
-    t2 = np.multiply(u_wrap[1:-1, 1:-1], np.tan(LAT[1:-1, 1:-1])) / constants.R
-    t3 = -np.divide(v_wrap[1:-1, 2:] - v_wrap[1:-1, 0:-2],
-                    2 * dlat * constants.R * np.cos(LAT[1:-1, 1:-1]))
+    dv_dlambda   = _d_dx4(vwnd, dlon, axis=1)          # axis=1 is periodic: roll is correct
+    ducos_dphi   = _d_dx4(uwnd * coslat, dlat, axis=0) # axis=0 is NOT periodic
 
-    rv = np.zeros([len(lat), len(lon)])
-    rv[1:-1, :] = t1 + t2 + t3
-    return(rv)
+    rv = (dv_dlambda - ducos_dphi) / (R * coslat)
 
-# Calculate divergence using second order, central differencing.
-# TODO: Use forwards and backwards differencing at the poles.
-# uwnd and vwnd are grids with dimensions [lat, lon].
+    # np.roll wraps in latitude, which is wrong; invalidate the two edge rings.
+    rv[:2, :]  = 0.0
+    rv[-2:, :] = 0.0
+    return rv
+
 def calc_div_sphere(lon, lat, uwnd, vwnd):
-    # Pad the left and right.
-    lon_wrap = np.hstack((lon[-1], lon, lat[0]))
-    u_wrap = np.hstack((np.expand_dims(uwnd[:, -1], 1), uwnd, np.expand_dims(uwnd[:, 0], 1)))
-    v_wrap = np.hstack((np.expand_dims(vwnd[:, -1], 1), vwnd, np.expand_dims(vwnd[:, 0], 1)))
-    LON, LAT = np.meshgrid(np.deg2rad(lon_wrap), np.deg2rad(lat))
+    """
+    Divergence on a sphere:
+        div = (1/(a cos(phi))) * [ d(u)/d(lambda) + d(v cos(phi))/d(phi) ]
+    uwnd, vwnd: shape [lat, lon].
+    """
+    R = constants.R
     dlon = np.deg2rad(lon[1] - lon[0])
     dlat = np.deg2rad(lat[1] - lat[0])
+    coslat = np.cos(np.deg2rad(lat))[:, None]
 
-    t1 = (v_wrap[2:, 1:-1] - v_wrap[0:-2, 1:-1]) / (2 * dlat * constants.R)
-    t2 = -np.multiply(v_wrap[1:-1, 1:-1], np.tan(LAT[1:-1, 1:-1])) / constants.R
-    t3 = np.divide(u_wrap[1:-1, 2:] - u_wrap[1:-1, 0:-2],
-                   2 * dlon * constants.R * np.cos(LAT[1:-1, 1:-1]))
+    du_dlambda  = _d_dx4(uwnd, dlon, axis=1)
+    dvcos_dphi  = _d_dx4(vwnd * coslat, dlat, axis=0)
 
-    div = np.zeros([len(lat), len(lon)])
-    div[1:-1, :] = t1 + t2 + t3
-    return (div)
+    div = (du_dlambda + dvcos_dphi) / (R * coslat)
 
-# Calculate the zonal and meridional wind from the streamfunction.
+    div[:2, :]  = 0.0
+    div[-2:, :] = 0.0
+    return div
+
+def _d_dx4(f, h, axis):
+    """4th-order centered derivative; uses i+-1 and i+-2 so the odd/even
+    sublattices are coupled (no checkerboard decoupling)."""
+    d = np.zeros_like(f)
+    fm2 = np.roll(f, 2, axis=axis)
+    fm1 = np.roll(f, 1, axis=axis)
+    fp1 = np.roll(f, -1, axis=axis)
+    fp2 = np.roll(f, -2, axis=axis)
+    d = (fm2 - 8*fm1 + 8*fp1 - fp2) / (12.0 * h)
+    return d
+
 def sf_wnd(lon, lat, psi):
-    u = np.zeros(psi.shape)
-    v = np.zeros(psi.shape)
     LON, LAT = np.meshgrid(np.deg2rad(lon), np.deg2rad(lat))
     dlon = np.deg2rad(lon[1] - lon[0])
     dlat = np.deg2rad(lat[1] - lat[0])
-    u[1:-1, 1:-1] = np.divide(psi[2:, 1:-1] - psi[0:-2, 1:-1], 2 * dlat * constants.R)
-    v[1:-1, 1:-1] = -np.divide(psi[1:-1, 2:] - psi[1:-1, 0:-2],
-                               2 * dlon * constants.R * np.cos(LAT[1:-1, 1:-1]))
-    return(u, v)
+
+    dpsi_dlon = _d_dx4(psi, dlon, axis=1)
+    dpsi_dlat = _d_dx4(psi, dlat, axis=0)
+
+    v =  dpsi_dlon / (constants.R * np.cos(LAT))
+    u = -dpsi_dlat / constants.R
+
+    # edges are garbage from the roll; zero or one-side them
+    u[:2, :] = u[-2:, :] = 0.0
+    u[:, :2] = u[:, -2:] = 0.0
+    v[:2, :] = v[-2:, :] = 0.0
+    v[:, :2] = v[:, -2:] = 0.0
+    return u, v
 
 # Calculate the zonal and meridional wind from the velocity potential.
 def pot_wnd(lon, lat, phi):
-    u = np.zeros(phi.shape)
-    v = np.zeros(phi.shape)
     LON, LAT = np.meshgrid(np.deg2rad(lon), np.deg2rad(lat))
     dlon = np.deg2rad(lon[1] - lon[0])
     dlat = np.deg2rad(lat[1] - lat[0])
-    u[1:-1, 1:-1] = -np.divide(phi[1:-1, 2:] - phi[1:-1, 0:-2],
-                              2 * dlon * constants.R * np.cos(LAT[1:-1, 1:-1]))
-    v[1:-1, 1:-1] = -np.divide(phi[2:, 1:-1] - phi[0:-2, 1:-1], 2 * dlat * constants.R)
-    return(u, v)
+
+    dphi_dlon = _d_dx4(phi, dlon, axis=1)
+    dphi_dlat = _d_dx4(phi, dlat, axis=0)
+
+    # u = (1/(a cosphi)) dphi/dlambda
+    u = dphi_dlon / (constants.R * np.cos(LAT))
+
+    # v = (1/a) dphi/dphi
+    v = dphi_dlat / constants.R
+
+    # np.roll wraps, so the two outermost rings are invalid.
+    for f in (u, v):
+        f[:2, :] = 0.0
+        f[-2:, :] = 0.0
+        f[:, :2] = 0.0
+        f[:, -2:] = 0.0
+
+    return u, v
+
+# # Calculate the zonal and meridional wind from the streamfunction.
+# def sf_wnd(lon, lat, psi):
+#     u = np.zeros_like(psi)
+#     v = np.zeros_like(psi)
+
+#     LON, LAT = np.meshgrid(np.deg2rad(lon), np.deg2rad(lat))
+#     dlon = np.deg2rad(lon[1] - lon[0])
+#     dlat = np.deg2rad(lat[1] - lat[0])
+
+#     # v = (1/a) dψ/dλ
+#     v[1:-1, 1:-1] = (psi[1:-1, 2:] - psi[1:-1, :-2]) / (2 * dlon * constants.R)
+
+#     # u = -(1/(a cosφ)) dψ/dφ
+#     u[1:-1, 1:-1] = -(psi[2:, 1:-1] - psi[:-2, 1:-1]) / (
+#         2 * dlat * constants.R * np.cos(LAT[1:-1, 1:-1])
+#     )
+
+#     return u, v
+
+# # Calculate the zonal and meridional wind from the velocity potential.
+# def pot_wnd(lon, lat, phi):
+#     u = np.zeros_like(phi)
+#     v = np.zeros_like(phi)
+
+#     LON, LAT = np.meshgrid(np.deg2rad(lon), np.deg2rad(lat))
+#     dlon = np.deg2rad(lon[1] - lon[0])
+#     dlat = np.deg2rad(lat[1] - lat[0])
+
+#     # u = (1/(a cosφ)) dφ/dλ
+#     u[1:-1, 1:-1] = (phi[1:-1, 2:] - phi[1:-1, :-2]) / (
+#         2 * dlon * constants.R * np.cos(LAT[1:-1, 1:-1])
+#     )
+
+#     # v = (1/a) dφ/dφ
+#     v[1:-1, 1:-1] = (phi[2:, 1:-1] - phi[:-2, 1:-1]) / (2 * dlat * constants.R)
+
+#     return u, v
+
 
 """ Transforms x-y distances to lon-lat distances (Cartesian approximation). """
 def to_sphere_dist(clon, clat, dx, dy):
